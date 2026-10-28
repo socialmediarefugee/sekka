@@ -139,7 +139,7 @@ impl Model {
             generations: generations::system(),
             user_packages: profile::user_elements(),
             user: std::env::var("USER").unwrap_or_default(),
-            catalog: catalog::load(&setup.facts.catalogs),
+            catalog: catalog::for_system(&setup.facts),
             nixpkgs: setup.facts.nixpkgs.clone(),
             setup,
             ..Model::default()

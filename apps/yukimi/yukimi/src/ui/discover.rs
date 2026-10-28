@@ -152,6 +152,9 @@ fn app_change(model: &Model, app: &Application) -> SystemChange {
 }
 
 fn install_app(ctx: &Ctx, app: &Application) {
+    if app.unavailable.is_some() {
+        return;
+    }
     let model = ctx.model();
     ctx.confirm(
         &format!("Install {}?", app.name),
@@ -263,7 +266,10 @@ fn details(ctx: &Ctx, package: &Package) {
     let for_all = gtk::Button::with_label("Install for everyone");
     for_all.add_css_class("pill");
     for_all.add_css_class("suggested-action");
-    let why_not = blocked(&model, package.unfree || app.as_ref().is_some_and(|a| a.unfree));
+    let why_not = app
+        .as_ref()
+        .and_then(|a| a.unavailable.clone())
+        .or_else(|| blocked(&model, package.unfree || app.as_ref().is_some_and(|a| a.unfree)));
     let done = match &app {
         Some(app) => model.app_installed(app, &installed.system),
         None => installed.for_everyone(&package.attr),
@@ -362,9 +368,18 @@ fn app_card(ctx: &Ctx, model: &Model, system: &BTreeSet<&str>, app: &Application
     description.set_vexpand(true);
     description.set_valign(gtk::Align::Start);
     card.append(&description);
+    if let Some(reason) = &app.unavailable {
+        card.append(&wrapping(reason, &["dim-label"]));
+    }
     let installed = model.app_installed(app, system);
-    let why_not = blocked(model, app.unfree);
-    let button = gtk::Button::with_label(if installed { "Installed" } else { "Install" });
+    let why_not = app.unavailable.clone().or_else(|| blocked(model, app.unfree));
+    let button = gtk::Button::with_label(if installed {
+        "Installed"
+    } else if app.unavailable.is_some() {
+        "Unavailable"
+    } else {
+        "Install"
+    });
     button.add_css_class("pill");
     button.set_halign(gtk::Align::Start);
     if !installed {
