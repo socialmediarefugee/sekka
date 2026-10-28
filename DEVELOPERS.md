@@ -984,6 +984,11 @@ nix develop .#aizome
 nix build .#aizome-checks.session -L
 ```
 
+The [on-demand profiling investigation](docs/profiling-options.md) compares
+sampling, native interaction timelines, third-party adapters and game profiling,
+with reproducible workstation experiments. It records proposals and component
+evidence; these capture controls are not yet shipped in Aizome.
+
 `aizome-checks` holds the 24 VM checks Aizome's flake had, under the names it
 gave them. They are in `legacyPackages`, not `checks`, so `nix flake check` and
 CI don't run them, just as they didn't run in Aizome's repository. Sekka's own
