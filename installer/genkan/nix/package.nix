@@ -74,6 +74,7 @@ let
       (aizome + "/crates/aizome-theme")
       (aizome + "/crates/aizome-config")
       (aizome + "/crates/aizome-shell-proto")
+      (aizome + "/crates/aizome-trace")
     ];
   };
   ui = lib.fileset.toSource {
