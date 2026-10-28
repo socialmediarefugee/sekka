@@ -292,6 +292,9 @@ pub struct Aizome {
     pub outputs_dirty: bool,
 
     pub settings: Settings,
+    /// The setting at session startup, independent of renderer overrides or
+    /// fallback. Only later edits should request another login.
+    pub startup_renderer: aizome_config::RendererChoice,
     pub palette: Palette,
     /// Ctrl+Alt+Del's overlay, drawn and run by the core so it works
     /// whatever the logic does.
@@ -537,6 +540,7 @@ impl State {
             icons: crate::icons::Icons::new(),
             ipc,
             palette,
+            startup_renderer: settings.renderer_choice(),
             settings,
             cursor_status: CursorImageStatus::default_named(),
             cursor_override: None,
@@ -574,6 +578,12 @@ impl State {
             // behind the closed lid, goes dark before its first frame.
             self.apply_power();
             self.lg_call((), |vt, st| (vt.outputs_changed)(st));
+            if self.az.lock.is_locked() {
+                // The keyboard may still point at a lock surface on the
+                // display that just went away. Select a surviving prompt
+                // even when no new surface needs to be created.
+                self.update_keyboard_focus();
+            }
         }
         self.lg_call((), |vt, st| (vt.loop_iteration)(st));
         self.lg_call((), |vt, st| (vt.publish)(st));

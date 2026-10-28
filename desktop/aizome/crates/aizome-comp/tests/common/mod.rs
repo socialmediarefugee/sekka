@@ -28,6 +28,7 @@ use wayland_client::protocol::{
 use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle, WEnum};
 use wayland_protocols::wp::text_input::zv3::client::{zwp_text_input_manager_v3, zwp_text_input_v3};
 use wayland_protocols::xdg::decoration::zv1::client::{zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1};
+use wayland_protocols::xdg::foreign::zv2::client::{zxdg_exported_v2, zxdg_exporter_v2};
 use wayland_protocols::xdg::shell::client::{xdg_surface, xdg_toplevel, xdg_wm_base};
 
 static COUNTER: AtomicU32 = AtomicU32::new(0);
@@ -460,6 +461,8 @@ pub struct Seen {
     pub ime_enabled: bool,
     pub ime_text: String,
     pub ime_dropped: u32,
+    /// The handle `Cmd::Export` got.
+    pub exported: Option<String>,
 }
 
 pub enum Cmd {
@@ -470,6 +473,9 @@ pub enum Cmd {
     /// Opens a dialog: a 200×150 toplevel of this title and colour, with
     /// the window as its parent.
     Dialog(String, u32),
+    /// Exports the window (xdg-foreign v2), as an app does for a portal
+    /// dialog: its handle comes in `Seen::exported`.
+    Export,
     Quit,
 }
 
@@ -533,6 +539,7 @@ struct App {
     xdg_surface: Option<xdg_surface::XdgSurface>,
     toplevel: Option<xdg_toplevel::XdgToplevel>,
     dialog: Option<(wl_surface::WlSurface, xdg_surface::XdgSurface, xdg_toplevel::XdgToplevel)>,
+    exported: Option<zxdg_exported_v2::ZxdgExportedV2>,
     pending_size: Option<(i32, i32)>,
     size: (i32, i32),
     needs_draw: bool,
@@ -572,6 +579,7 @@ fn run_client(stream: UnixStream, spec: Spec, rx: Receiver<Cmd>, seen: Arc<Mutex
         xdg_surface: None,
         toplevel: None,
         dialog: None,
+        exported: None,
         pending_size: None,
         needs_draw: false,
         configured: false,
@@ -632,6 +640,11 @@ fn run_client(stream: UnixStream, spec: Spec, rx: Receiver<Cmd>, seen: Arc<Mutex
                     tl.set_title(title);
                     s.commit();
                     app.dialog = Some((s, xs, tl));
+                }
+                Cmd::Export => {
+                    let exporter: zxdg_exporter_v2::ZxdgExporterV2 =
+                        globals.bind(&qh, 1..=1, ()).expect("zxdg_exporter_v2");
+                    app.exported = Some(exporter.export_toplevel(app.surface.as_ref().unwrap(), &qh, ()));
                 }
                 Cmd::Quit => app.quit = true,
             }
@@ -714,8 +727,24 @@ ignore!(
     wl_surface::WlSurface,
     zxdg_decoration_manager_v1::ZxdgDecorationManagerV1,
     wl_seat::WlSeat,
-    zwp_text_input_manager_v3::ZwpTextInputManagerV3
+    zwp_text_input_manager_v3::ZwpTextInputManagerV3,
+    zxdg_exporter_v2::ZxdgExporterV2
 );
+
+impl Dispatch<zxdg_exported_v2::ZxdgExportedV2, ()> for App {
+    fn event(
+        app: &mut Self,
+        _: &zxdg_exported_v2::ZxdgExportedV2,
+        event: zxdg_exported_v2::Event,
+        _: &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        if let zxdg_exported_v2::Event::Handle { handle } = event {
+            app.seen.lock().unwrap().exported = Some(handle);
+        }
+    }
+}
 
 impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for App {
     fn event(
@@ -974,8 +1003,8 @@ use wayland_protocols::ext::session_lock::v1::client::{
     ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1,
 };
 
-/// Locks the session with a solid-colour lock surface on the first output
-/// until dropped or unlocked.
+/// Locks the session with a solid-colour lock surface on each output
+/// advertised when it starts, until dropped or unlocked.
 pub struct LockClient {
     tx: Sender<Cmd>,
     pub locked: Arc<Mutex<Option<bool>>>,
@@ -1013,7 +1042,6 @@ impl Drop for LockClient {
 struct Locker {
     color: u32,
     shm: wl_shm::WlShm,
-    surface: wl_surface::WlSurface,
     locked: Arc<Mutex<Option<bool>>>,
 }
 
@@ -1023,12 +1051,23 @@ fn run_lock(stream: UnixStream, color: u32, rx: Receiver<Cmd>, locked: Arc<Mutex
     let qh = queue.handle();
     let compositor: wl_compositor::WlCompositor = globals.bind(&qh, 4..=6, ()).unwrap();
     let shm: wl_shm::WlShm = globals.bind(&qh, 1..=1, ()).unwrap();
-    let output: wl_output::WlOutput = globals.bind(&qh, 1..=4, ()).unwrap();
+    let outputs: Vec<wl_output::WlOutput> = globals.contents().with_list(|list| {
+        list.iter()
+            .filter(|g| g.interface == "wl_output")
+            .map(|g| globals.registry().bind(g.name, g.version.min(4), &qh, ()))
+            .collect()
+    });
     let manager: ext_session_lock_manager_v1::ExtSessionLockManagerV1 = globals.bind(&qh, 1..=1, ()).unwrap();
-    let surface = compositor.create_surface(&qh, ());
     let lock = manager.lock(&qh, ());
-    let mut state = Locker { color, shm, surface: surface.clone(), locked };
-    let _lock_surface = lock.get_lock_surface(&surface, &output, &qh, ());
+    let mut state = Locker { color, shm, locked };
+    // Each lock surface carries the wl_surface its configures fill.
+    let _lock_surfaces: Vec<_> = outputs
+        .iter()
+        .map(|output| {
+            let surface = compositor.create_surface(&qh, ());
+            lock.get_lock_surface(&surface, output, &qh, surface.clone())
+        })
+        .collect();
     let mut quit = false;
     while !quit {
         if rx.try_iter().any(|c| matches!(c, Cmd::Quit)) {
@@ -1093,12 +1132,12 @@ impl Dispatch<ext_session_lock_v1::ExtSessionLockV1, ()> for Locker {
     }
 }
 
-impl Dispatch<ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, ()> for Locker {
+impl Dispatch<ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, wl_surface::WlSurface> for Locker {
     fn event(
         s: &mut Self,
         ls: &ext_session_lock_surface_v1::ExtSessionLockSurfaceV1,
         event: ext_session_lock_surface_v1::Event,
-        _: &(),
+        surface: &wl_surface::WlSurface,
         _: &Connection,
         qh: &QueueHandle<Self>,
     ) {
@@ -1106,9 +1145,9 @@ impl Dispatch<ext_session_lock_surface_v1::ExtSessionLockSurfaceV1, ()> for Lock
             ls.ack_configure(serial);
             let (w, h) = (width as i32, height as i32);
             let buffer = solid_buffer(&s.shm, (w, h), s.color, qh);
-            s.surface.attach(Some(&buffer), 0, 0);
-            s.surface.damage_buffer(0, 0, w, h);
-            s.surface.commit();
+            surface.attach(Some(&buffer), 0, 0);
+            surface.damage_buffer(0, 0, w, h);
+            surface.commit();
         }
     }
 }

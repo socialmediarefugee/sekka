@@ -17,7 +17,7 @@
   # (tests/test_aizome_development.py); Nix can't use it, as GitHub's
   # tarballs of Sekka leave submodules empty.
   inputs.sidestep = {
-    url = "github:bitemyapp/sidestep/dae957e913376a26e642d6abee533eb755fb9092";
+    url = "github:bitemyapp/sidestep/7bfacbbbc9cd70cf3442def70368e254f3c3712d";
     flake = false;
   };
 
@@ -138,7 +138,7 @@
         default = pkgs.mkShell {
           inputsFrom = [
             calamares
-            inputs.yukimi.packages.${system}.yukimi
+            inputs.yukimi.packages.${system}.yukimi.helper
           ];
           packages = [
             pkgs.cargo
@@ -148,6 +148,8 @@
             pkgs.nixfmt
             pkgs.python3
             pkgs.pkg-config
+            pkgs.gtk4
+            pkgs.libadwaita
             # Tatami's Sound window links libpulse for its level meter.
             pkgs.libpulseaudio
           ];
@@ -682,7 +684,7 @@
               python3 ${./tests/test_launcher_search.py} \
                 ${inputs.tatami.packages.${system}.elephant} ${pkgs.elephant} \
                 ${./desktop/tatami/config/elephant} \
-                ${./apps/yukimi/yukimi/data/io.github.bitemyapp.Yukimi.desktop} \
+                ${./desktop/aizome/apps/yukimi/data/org.aizome.Yukimi.desktop} \
                 ${./apps/kakehashi/linux/computer.sekka.Kakehashi.desktop} \
                 ${./desktop/tatami/activity/data/org.tatami.Activity.desktop} \
                 ${./desktop/tatami/network/data/org.tatami.Network.desktop} \
@@ -715,6 +717,11 @@
               touch $out
             '';
         yukimi = self.packages.${system}.yukimi;
+        yukimi-tatami = self.packages.${system}.yukimi-discover;
+        yukimi-x11 = import ./nix/yukimi-x11-test.nix {
+          inherit pkgs;
+          desktopsModule = inputs.calamares.nixosModules.desktops;
+        };
         update-completion = import ./nix/update-completion-test.nix {
           inherit pkgs;
           inherit (self.packages.${system}) yukimi;

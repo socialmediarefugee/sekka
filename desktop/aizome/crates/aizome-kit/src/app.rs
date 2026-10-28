@@ -317,6 +317,7 @@ impl<P: Program> Runtime<P> {
     pub fn outputs_changed(&mut self, platform: &mut dyn Platform) {
         let mut cx = Cx { core: &mut self.core, platform, pool: &mut self.pool, _m: PhantomData };
         self.program.outputs_changed(&mut cx);
+        self.core.mark_all_dirty();
         self.flush(platform);
     }
 
@@ -431,6 +432,9 @@ impl Platform for SidestepPlatform<'_> {
                 }
                 if let Some(p) = parent.and_then(|p| self.maps.to_side.get(&p)) {
                     o = o.transient_for(*p);
+                }
+                if let Some(handle) = &spec.foreign_parent {
+                    o = o.foreign_parent(handle.clone());
                 }
                 o
             }

@@ -650,7 +650,8 @@ pub struct InputState {
     /// The effective named cursor, or `None` for a client surface or hidden cursor.
     #[serde(default)]
     pub cursor_name: Option<String>,
-    /// The app whose surface has the pointer, and the keyboard.
+    /// The app whose surface has the pointer, and the keyboard (`the lock
+    /// screen on <output>` for a lock surface).
     pub pointer_focus: Option<String>,
     pub keyboard_focus: Option<String>,
 }
@@ -792,8 +793,8 @@ pub struct Stats {
     /// `gpu` or `software`); it takes effect at the next start.
     #[serde(default)]
     pub renderer_setting: String,
-    /// The setting asks for another renderer than the one running: it
-    /// applies after logging out and in.
+    /// The renderer setting changed since this session started. A fallback
+    /// or start-time override alone does not require another login.
     #[serde(default)]
     pub renderer_after_restart: bool,
     /// The compositor's logic.
@@ -974,6 +975,11 @@ impl Client {
 
     pub fn connect_to(path: &Path) -> io::Result<Client> {
         let stream = UnixStream::connect(path)?;
+        Self::from_stream(stream)
+    }
+
+    /// Use an established connection, retaining its caller's timeout policy.
+    pub fn from_stream(stream: UnixStream) -> io::Result<Client> {
         let reader = BufReader::new(stream.try_clone()?);
         Ok(Client { writer: stream, reader })
     }

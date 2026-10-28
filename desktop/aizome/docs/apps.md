@@ -25,7 +25,8 @@ the Toolchest, the palette and the Deskbar show beside it and search by.
 
 Also part of the session, not separate apps: the Toolchest, the command
 palette, notifications, the lock screen and the polkit dialog (all in
-`aizome-shell`). The terminal is foot, themed by Aizome's module.
+`aizome-shell`), and the file chooser other apps open and save with
+(`aizome-portal`, below). The terminal is foot, themed by Aizome's module.
 
 ## Conventions
 
@@ -61,7 +62,8 @@ palette, notifications, the lock screen and the polkit dialog (all in
 
 Sources to port from are in the Sekka repository (`~/work/sekka`, or
 `git -C ~/work/sekka show origin/main:<path>` for what's only on main):
-Tatami's GTK apps under `desktop/tatami/` and Yukimi under `apps/yukimi/`.
+Tatami's GTK apps are under `desktop/tatami/`. Yukimi already shares its native
+interface across desktops; its backend libraries remain under `apps/yukimi/`.
 They are MIT OR Apache-2.0 by the same author: copy what helps and rewrite
 the UI with the kit. Keep their behaviour and their care for edge cases.
 
@@ -218,23 +220,23 @@ As built, beyond the above:
 
 ### Yukimi (Software)
 
-Yukimi, Sekka's Nix software manager, made native: the same Overview,
-Installed, Discover, Updates, History and Storage views and the same
-behaviour (read Sekka's `apps/yukimi/README.md`), rebuilt with the kit.
+Yukimi is Sekka's Nix software manager on every desktop: Overview,
+Installed, Discover, Updates, History, Storage and Desktops
+(read Sekka's `apps/yukimi/README.md`), built with the kit.
 It shares the canonical UI-independent crates (`yukimi-config`,
 `yukimi-store`, `yukimi-system`) under Sekka's `apps/yukimi/crates/`
-with the GTK interface, and uses Sekka's installed privileged
+with the helper and CLI, and uses Sekka's installed privileged
 helper (`yukimi-helper`, with its polkit policy) for system changes, found
 where Sekka's Yukimi package installs it.
 
 As built: the helper is the program Sekka's polkit action
 `io.github.bitemyapp.Yukimi.change-system` names (its
 `org.freedesktop.policykit.exec.path`, read from the installed policy), run
-through `/run/wrappers/bin/pkexec --disable-internal-agent` with the GTK
-Yukimi's helper arguments, so it needs `programs.yukimi.enable` (Sekka sets
+through `/run/wrappers/bin/pkexec --disable-internal-agent`, so it needs
+`programs.yukimi.enable` (Sekka sets
 it on every desktop) and nothing
-of Aizome's. Its cache is `~/.cache/aizome/yukimi`, reading the GTK
-Yukimi's package index and last check from `~/.cache/yukimi` until it has
+of Aizome's session. Its cache is `~/.cache/aizome/yukimi`, reading the former GTK
+interface's package index and last check from `~/.cache/yukimi` until it has
 its own. `aizome-yukimi --sample` shows a sample system;
 `AIZOME_YUKIMI_ETC=/some/etc` looks at another system's configuration
 without changing anything.
@@ -252,7 +254,7 @@ package profile, then shell replacement, an interrupted password dialog,
 and retrying after a sustained agent outage. The fixture substitutes
 prebuilt profiles for Nix evaluation/building.
 
-Beyond the GTK Yukimi, it changes what used to take typing `sudo` commands:
+It also changes what used to take typing `sudo` commands:
 
 - **Early updates** (Updates): a switch to update Sekka from its `main`
   branch as soon as changes are merged, before the nightly checks
@@ -701,3 +703,74 @@ the compositor's IPC after checking the focus and the lock, and keeps
 audio and transcripts in memory. `aizome-koe` also has the commands
 scripts and agents use (`record`, `status`, `watch`, `model`, `packs`,
 `words`, `examples`, `enable`, `disable`).
+
+### The file chooser (portal)
+
+Not an app of its own: the window other apps open and save with. Apps
+ask `xdg-desktop-portal` for a file chooser (Chromium, Chrome and
+Electron apps such as VS Code, Obsidian, Slack and Signal; Zed; Flatpaks;
+Firefox and GTK 3 apps, which the session's `GTK_USE_PORTAL=1` sends
+there), and in Aizome sessions `aizome-portals.conf` routes
+`org.freedesktop.impl.portal.FileChooser` to `aizome-portal`, which D-Bus
+starts as `aizome-portal.service` when it's first asked.
+
+It is Files in miniature, built from Hako's model and look: Hako's
+sidebar (Recent when opening files; Home and the person's folders; the
+current Desk's folder; the system's disk and mounted volumes), its path
+bar from Home (or the Computer) down, and the folder as a list with
+Name, Date Modified, Size and Kind, sorted by a header or View ▸ Sort
+By, folders first. What the app asked for decides the rest:
+
+- **Open**: files, several with ⇧ and ❖ when the app allows; or folders
+  (Choose takes the folder selected, or the one the chooser is in). A
+  folder activated is gone into, not chosen.
+- **Save**: "Save as" on top, with the app's name for the file; a name
+  can be a path (`Drafts/x.md`, `~/Documents/x.md`), and a folder's path
+  goes there. A file that's already there is replaced only after asking.
+  Save As starts in the file's folder with it selected.
+- **Save Files** (several files at once): a folder; names already there
+  get a number, as Files keeps both (`notes 2.md`).
+- **Filters** in a pop-up (patterns matched without regard to case, and
+  MIME types through the shared MIME-info database, subclasses
+  included); saving, a name ending in one filter's extension takes the
+  next one's. The app's **choices** show as pop-ups and checkboxes, and
+  go back with the answer; so does the filter, and Open's files are
+  writable.
+- The Go menu: Back ❖[, Forward ❖], Enclosing Folder ❖↑, Recent ⇧❖F,
+  Home ⇧❖H, Desktop ⇧❖D, Documents ⇧❖O, Downloads ⌥❖L and Go to Folder…
+  ⇧❖G (a path, or a file to select). New Folder ⇧❖N where things are
+  saved or folders chosen; View ▸ Show Hidden Files ⇧❖.; Return accepts,
+  Escape cancels, as does closing the window.
+- It remembers in `$XDG_STATE_HOME/aizome/portal/file-chooser.json`
+  where each app last chose (apps outside a sandbox mostly have no app
+  id, so theirs is the last folder chosen), whether hidden files show,
+  and the order. Otherwise it starts where the app said, then in the
+  current Desk's folder, then at home.
+
+As built: the service (`aizome-portal`) holds no window. Each request
+runs `aizome-portal --file-chooser` with the request as JSON on its
+standard input and reads its answer (`null` for cancelled) from its
+standard output; the frontend closing the request
+(`org.freedesktop.impl.portal.Request.Close`) ends that process and
+what it started. The chooser imports the window the app exported
+(`parent_window` `wayland:<handle>`, xdg-foreign v2, through Sidestep's
+`WindowOptions::foreign_parent` and the kit's
+`WindowSpec::foreign_parent`), so the compositor places it over that
+window as its dialog; X11 parents and unknown handles leave it on its
+own. At most 16 choosers are open at once.
+
+Qt apps keep Qt's dialogs (the session's `QT_QPA_PLATFORMTHEME=gtk3`
+draws GTK's), and GTK 4 apps outside a sandbox keep GTK's unless they ask
+the portal. Aizome's own apps keep the kit's file panel (`cx.open_panel`,
+`cx.save_panel`), a sheet in their window.
+
+`cargo test -p aizome-portal` covers the request and answer on the bus
+(`tests/service.rs`, a private D-Bus with a stand-in chooser: the
+request handed over, each answer, `Close`), the chooser in every mode on
+the kit's stand-in platform (`tests/chooser.rs`), and its pictures in
+Night and Day (`tests/goldens.rs`). With the binary built,
+`AIZOME_PORTAL_TEST_BIN=target/debug/aizome-portal cargo test -p
+aizome-comp --test portal -- --include-ignored` runs the chooser under
+a headless compositor over a test window that exported itself: it is
+that window's dialog, has the keys, and opens a file with ↓ and Return.
+These are component checks, not a check of the installed session.

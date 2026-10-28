@@ -59,6 +59,10 @@ its ideas from Haiku, NeXTSTEP and IRIX:
   apart (**Super + Ctrl + ↑** shows them all).
 - **Super** is the command key in every app (**Super + C**, **Super + V**),
   and foot opens in fish.
+- Browsers, Electron apps, Zed and Flatpaks open and save files in Aizome's
+  own chooser: Files' sidebar and path bar over the app's window, with its
+  filters and options. Qt apps, and GTK 4 apps that don't ask the desktop
+  portal, still show their own dialogs.
 
 It comes with its own apps: Settei (Settings), Yukimi, Hako (Files), Sumi
 (Text Editor), Fusen (Notes), Koyomi (Calendar), Tokei (Clock), Soroban
@@ -132,6 +136,10 @@ firmware; try a key or mouse button if mouse movement does not wake it.
 
 See what's installed and why, find software, check for updates, return to an earlier generation, and free up store space. Everyday changes do not require editing Nix configuration by hand.
 
+Every desktop uses Aizome's native Yukimi. It opens directly on Wayland and
+inside a nested Wayland window on X11. Commands use Ctrl in Tatami and the
+other desktops, and Super in Aizome.
+
 [![Yukimi system manager](docs/images/sekka/yukimi.png)](docs/images/sekka/yukimi.png)
 
 *Current application in Tatami, in a disposable NixOS test VM.*
@@ -143,6 +151,8 @@ Plasma, GNOME and Xfce are available too. Multiple installed desktops share your
 [![Plasma with Konsole and Dolphin](docs/images/sekka/plasma.png)](docs/images/sekka/plasma.png)
 
 [![GNOME with Files and Yukimi](docs/images/sekka/gnome.png)](docs/images/sekka/gnome.png)
+
+*This GNOME capture predates Yukimi's shared native interface.*
 
 ## Trying Sekka
 
@@ -204,8 +214,7 @@ may need building. Run `sekka-update --status` to check whether anything
 remains to be applied.
 
 To get changes before the nightly does, turn on **Early updates** in
-Yukimi's Updates page (in Aizome; in the other desktops, follow `main` from
-the Sekka row's branch button), or run `sekka-update --early`. Updates then
+Yukimi's Updates page, or run `sekka-update --early`. Updates then
 follow Sekka's `main` branch as soon as changes are merged, before the
 nightly checks run, and anything the binary cache doesn't have yet builds on
 your computer. `sekka-update --nightly` goes back.

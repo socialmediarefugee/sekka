@@ -11,14 +11,14 @@ Sekka is the source home for the ISO, Genkan installer, Aizome and Tatami deskto
 | `desktop/aizome/` | Sekka's own desktop: compositor, shell, apps, NixOS module, VM checks, its docs |
 | `desktop/tatami/` | Desktop module, configuration, Rust commands, Displays app, wallpapers |
 | `vendor/sidestep/` | Git submodule: the Sidestep fork Aizome builds against in development |
-| `apps/yukimi/` | GTK application, privileged helper, store/configuration/system libraries |
+| `apps/yukimi/` | Privileged helper, CLI, and store/configuration/system libraries |
 | `apps/kakehashi/` | Cross-platform USB writer: GPUI window, privileged helper, drive and image library |
 | `modules/`, `templates/` | Live ISO and the installed-system flake template |
 | `nix/` | Component integration, packages, application resolution, prebuilt systems |
 | `rust/`, `scripts/` | Image, VM, diagnostics, USB and release tooling |
 | `site/` | The sekka.computer website generator |
 | `tests/` | Generated-system configuration matrices and integration checks |
-| `docs/` | Architecture, migration notes, screenshots, historical evidence, brand, patches sent upstream |
+| `docs/` | Architecture, migration notes, screenshots, historical evidence, [incident records](docs/incidents/README.md), brand, patches sent upstream |
 
 The initial import preserves component layouts and separate Cargo workspaces, and Aizome, which joined later, keeps its own workspace in `desktop/aizome` ([migration record](docs/migration.md#aizome)). There are no first-party submodules or remote first-party flake inputs; the one submodule, `vendor/sidestep`, is Sidestep's fork, which Aizome builds against ([Aizome](#aizome)). `nix/components.nix` adapts the local components to the existing integration interface; its `calamares` name and the `calamares.*` options are compatibility names, not another source repository.
 
@@ -131,35 +131,17 @@ same mandatory gate and rejects changed contents, executable bits, symlinks,
 missing directories/paths and altered registration. Neither check certifies
 a complete release image or physical hardware.
 
-The October 24 investigation of the October 22 download is recorded in
-`docs/test-results/installer-integrity-2026-10-24.json`. The public ISO and its
-Firefox passed verification; injecting corruption into that exact ISO's live
-store reproduced the post-format copy failure. This establishes the missing
-installer integrity boundary, not what damaged the reporting Mac's bytes.
 Checks cannot guarantee against RAM faults, media changes or I/O failures
 after verification. Keep Nix's copy-time checks enabled; deferred installations
 still obtain unavailable downloads after formatting and can encounter network
-or build failures at that point.
-
-Additional RAM stress evidence is recorded in
-`docs/test-results/installer-memory-2026-10-24.json`. With the same diagnostic
-image, a 4 GiB VM completed the normal GUI installation while a background
-process held 1.5 GiB of random data resident and could not swap. The installer
-selected the deferred route, built the 8.31 GiB system on disk, and subsequently
-booted, accepted a normal login and opened Firefox with its expected hash.
-Available RAM fell to 56 MiB and zram swap use reached 3.23 GiB without OOM kills.
-This demonstrates that the complete system need not fit in physical RAM; it
-does not establish a universal minimum memory requirement.
-
-The 2 GiB clean-install case failed during Nix evaluation on both the unmodified
-public ISO and the diagnostic image: live-store space ran out and the kernel
-OOM-killed desktop processes before any target writes. The evaluations were
-then interrupted; these are failed tests, not graceful automatic refusals.
-The separate corrupt-file case at 2 GiB did refuse installation before erasure
-and preserved the entire target. Deferring downloads does not eliminate the
-RAM and temporary live-store space needed to evaluate the configuration first.
-Do not describe the deferred route as immune to memory exhaustion or these
-focused VM results as physical-hardware or full-release qualification.
+or build failures at that point. The deferred route builds the system on the
+target, so the complete system need not fit in physical RAM, but it does not
+eliminate the RAM and temporary live-store space needed to evaluate the
+configuration first. Do not describe the deferred route as immune to memory
+exhaustion, or focused VM results as physical-hardware or full-release
+qualification. The
+[installer incident](docs/incidents/2026-10-24-installer-hash-mismatch-after-erase.md)
+records the failure that led to this boundary and its memory-pressure tests.
 
 The ISO embeds a prebuilt system and precache path list for every desktop
 offered by Genkan, including default Aizome, and one more prebuilt system with
@@ -206,56 +188,123 @@ User `mpv.conf` and command-line preferences override those defaults.
 in an Aizome VM using the shipped config and checks both override routes.
 This component test does not replace playback through the exact ISO's normal UI.
 
-When GNOME is coinstalled, its IBus dependency also needs a Wayland frontend
-inside Aizome. Sekka starts that frontend with `aizome-session.target`; GNOME
-keeps its own IBus service and Xfce keeps the legacy frontend. Aizome's GTK/Qt
-input modules use Wayland only within its session environment. An explicit
-custom IBus panel remains under the user's own integration.
-`checks.x86_64-linux.aizome-ibus-policy` evaluates these configuration cases;
-`checks.x86_64-linux.aizome-ibus` exercises real Hangul preedit, editing,
-spaces, digits and Enter in Sumi and GTK, plus desktop switches with a lingering
-user manager. A frontend exit of 1 is accepted only after its Aizome session
-has stopped or begun stopping. The test injects exit 1 into a temporary copy of
-the installed wrapper to check both states, then kills the real frontend and
-verifies automatic recovery before composing text. This instrumented component
-VM does not qualify an ISO.
+### Aizome and IBus
 
-The Aizome frontend alone backports the physical-key forwarding part of
-[IBus commit 58b74bd76d79](https://github.com/ibus/ibus/commit/58b74bd76d79bfb909eb011f5f444f474a9415c1)
-to pinned IBus 1.5.34. Without it, Hangul commits composed text but loses
-forwarded spaces and digits through input-method-v2. Keycode-zero synthetic
-keysyms remain unsupported; the later upstream implementation depends on its
-1.5.35 keymap refactor. Sekka's all-desktop configuration adds no IBus engines,
-so it offers the built-in XKB/simple engines, which do not emit forwarded-key
-events. Its application catalog and Settings do not configure additional
-engines. The component test explicitly adds Hangul 1.5.5, whose forwarding
-call retains the physical keycode. This establishes coverage for those paths,
-not arbitrary engines installed and configured by a user. Before adding an
-engine to the shipped configuration, inspect its forwarding semantics and
-test its native and GTK text paths; a keycode-zero engine needs the remaining
-upstream fix first.
+When GNOME is coinstalled, its IBus dependency also needs a Wayland frontend
+inside Aizome. `installer/genkan/rust/system/input-method.nix` starts that
+frontend with `aizome-session.target`; GNOME keeps its own IBus service and
+Xfce keeps the legacy frontend. Only Aizome's frontend package is patched;
+the distribution daemon, engines and GTK/Qt modules remain unchanged. An
+explicit custom IBus panel remains under the user's own integration.
+Aizome's GTK/Qt input modules use Wayland only within its session environment.
+
+The Aizome dconf profile defaults `org.freedesktop.ibus.general`'s
+`use-system-keyboard-layout` to true. Its actual dconf path is
+`/desktop/ibus/general/use-system-keyboard-layout`, **not** the schema ID
+converted into a path. Aizome owns ordinary XKB layouts; IBus still handles
+engine composition. With the backport, keys an engine does not consume reach
+applications as key events instead of unsolicited text commits. This also
+preserves application shortcuts without modifiers. The default is unlocked:
+a user's explicit preference wins. No startup script writes the shared user
+database, and GNOME/Xfce do not inherit this Aizome profile default.
+
+The Chrome failure is reproducible by focusing a webpage input, opening a
+new tab with Ctrl+T, closing it with Ctrl+W, and typing. Letters disappear
+until a non-text key such as Shift is pressed. Protocol traces show text
+reaching Chrome immediately; this is not queued input or compositor latency.
+Chromium's browser-shortcut suppression discards character events until a
+fresh keydown, while its single-character IME commit path can produce a
+character without that keydown
+([browser suppression](https://github.com/chromium/chromium/blob/155.0.8059.84/content/browser/renderer_host/render_widget_host_impl.cc#L1819-L1880),
+[IME commit path](https://github.com/chromium/chromium/blob/155.0.8059.84/ui/base/ime/linux/input_method_auralinux.cc#L467-L499),
+[related IBus report](https://github.com/ibus/ibus/issues/2855)). The traces and
+source support this mechanism; the browser's internal flag was not inspected
+with a debugger. Preserving ordinary key events fixes the reproduced failure
+without disabling IME composition or injecting fake recovery keys.
+
+The patch series in `nix/patches/` applies to pinned IBus 1.5.34 in this order:
+
+| Patch | Upstream provenance and purpose |
+| --- | --- |
+| `ibus-wayland-forward-keycode.patch` | Physical-keycode subset of [58b74bd76d79](https://github.com/ibus/ibus/commit/58b74bd76d79bfb909eb011f5f444f474a9415c1); preserves Hangul's forwarded Space, digits and Enter through input-method-v2. |
+| `ibus-wayland-serial.patch` | [a8ff75597150](https://github.com/ibus/ibus/commit/a8ff755971509f09e1d0ea52a10be1bfc13af39b); resets the commit counter only for a new input-method interface, not unrelated globals such as a newly connected display. |
+| `ibus-wayland-system-keymap-dependencies.patch` | [18d8e37e112a](https://github.com/ibus/ibus/commit/18d8e37e112a155f3f80d36e4d6a845cc2e23bd8) guards removed seats; [a32d034f27c5](https://github.com/ibus/ibus/commit/a32d034f27c5f89813405e0a0f780b851b2cf893) bounds modifier-mask shifts; [ad28e5e42f4c](https://github.com/ibus/ibus/commit/ad28e5e42f4c89a4cbf546660db858f7ddd130b6) releases old resources. These are prerequisites for the keymap refactor, retained without functional changes. |
+| `ibus-wayland-system-keymap.patch` | [cbaffca21e9e](https://github.com/ibus/ibus/commit/cbaffca21e9e9b61d081742058a9a6642b8d3bb4) separates compositor and engine keymaps; [6796a3dcd8e6](https://github.com/ibus/ibus/commit/6796a3dcd8e6d815bda838f7f2cb153e89f79b66) implements system-keymap/key-event forwarding; [ce066c8d9b17](https://github.com/ibus/ibus/commit/ce066c8d9b17f086cba3159eafbc4f7a92f93807) connects the existing preference to the Wayland frontend. |
+
+Do not replace this series with **1.5.35-rc1 solely because it contains those
+commits**. In the October 27, 2026 isolated tests with Chrome 155.0.8059.84,
+the installed frontend failed 20/20 tab-return trials. Both the narrow
+backport and 1.5.35-rc1 with the setting enabled passed 20/20, but the latter
+corrupted Hangul 1.5.5's forwarded keys: Space became `n`, Enter became `t`,
+and `1` disappeared. Its forwarding path subtracts eight from the supplied
+physical evdev keycode. The existing adapted physical-keycode patch preserves
+that code. Upgrading alone with the upstream default setting still failed
+20/20 Chrome trials. The narrow series retains both previous fixes and avoids
+the later forwarding/latch changes responsible for this observed regression.
+
+Regression checks:
+
+```sh
+nix build .#checks.x86_64-linux.aizome-ibus-policy \
+  .#checks.x86_64-linux.ibus-wayland-serial \
+  .#checks.x86_64-linux.aizome-ibus --no-update-lock-file
+```
+
+The policy check evaluates complete system derivations for desktop combinations,
+disabled IBus and custom panels, including the scope of the dconf default.
+The serial check compiles the actual registry callback before and after its
+patch; its negative control must reproduce the unrelated-global serial reset.
+The component VM exercises real Hangul preedit, editing, spaces, digits and
+Enter in Sumi, GTK and native-Wayland Google Chrome, then switches between
+Aizome, Xfce and GNOME with a lingering user manager. The Chrome probe observes
+a local textarea and contenteditable using CDP, but sends tested keys through
+Aizome's input path. It checks both held and released Ctrl during tab cycling,
+ordinary DOM keydowns, the user's ability to override and reset the default,
+and composition after a tab cycle. It records whether disabling the option
+reproduces lost text and Shift recovery; a future browser may fix that control.
+The VM also verifies frontend failure/restart and normal logout behavior.
+These are component tests, not ISO or physical docking qualification.
+
+Known limits: keycode-zero synthetic keysyms remain unsupported. Sekka's
+all-desktop configuration adds no IBus engines, so it offers the built-in
+XKB/simple engines. The component test explicitly adds Hangul 1.5.5; it does
+not establish support for arbitrary user-installed engines. Before adding an
+engine, inspect its forwarding semantics and test native, GTK and browser
+composition. Separately, changing the compositor layout while IBus is already
+running can leave its virtual-keyboard path using the previous keymap. This
+was reproduced with both the installed frontend and the narrow backport;
+the no-IBus control updated correctly. US/German layouts and Compose configured
+at session start passed isolated tests. Live keymap propagation is a separate
+remaining integration issue, not fixed by this Chrome backport.
+
+**Returning to vanilla IBus:**
+
+1. On a Nixpkgs update, confirm the pinned source contains all the fixes above
+   or documented equivalents, and check the physical-keycode units against
+   the installed engines. The existence of a newer version or the original
+   forward-key commit is insufficient; 1.5.35-rc1 is the known counterexample.
+2. On a development branch, replace the `frontend` override in
+   `input-method.nix` with `pkgs.ibus` and run the checks above using that exact
+   package. Require Chrome tab-return typing and Hangul preedit, editing,
+   spaces, digits and Enter to pass together, including desktop switches.
+   Retain serial coverage, adapting the before/after harness when its patch
+   is no longer applied. Check display changes and live layout propagation
+   separately; do not claim those limitations are solved by the upgrade.
+3. Once the vanilla package passes, delete the obsolete patch files and the
+   override, update the provenance/validation record here, and retain the
+   regression tests. Aizome still needs its frontend service and session
+   environment. Keep the system-keyboard-layout policy unless a separate
+   tested policy change replaces it: removing patches does not imply that
+   upstream's false default has become appropriate for Aizome.
+
+After activating a system containing this change, restarting
+`aizome-ibus.service` replaces its frontend without restarting the compositor
+or closing applications. An explicit false user preference remains false;
+`DCONF_PROFILE=aizome dconf reset /desktop/ibus/general/use-system-keyboard-layout`
+returns it to the session default. A system-generation rollback restores the
+previous package and profile defaults without undoing user preferences.
 
 ## Sources and installed-system updates
-
-Sekka backports IBus's upstream serial fix
-[`a8ff7559`](https://github.com/ibus/ibus/commit/a8ff755971509f09e1d0ea52a10be1bfc13af39b)
-to Aizome's Wayland input-method frontend. In 1.5.34 every newly announced
-Wayland global reset the input-method counter: plugging in a display made
-foot discard letters while Return, sent as a virtual keyboard event, still
-worked. The counter now resets only for an input-method interface. Aizome
-already tolerates the old frontend's counter, but fixing IBus also protects
-sessions running older local compositor builds. No compositor development
-or live-reload workflow changes are required.
-
-`nix build .#checks.x86_64-linux.ibus-wayland-serial` compiles the real IBus
-registry callback before and after the backport. It requires the original
-to exhibit the precise serial reset, then checks repeated output and other
-global announcements, including the maximum serial, and initialization of
-both input-method versions. This is a component test, not a physical docking
-test. The patch is confined to the existing Aizome frontend override; remove
-it once the pinned IBus contains the upstream fix. After activating the new
-system, `systemctl --user restart aizome-ibus.service` replaces that frontend
-without restarting the compositor or closing applications.
 
 The root lock retains distinct base-system and application Nixpkgs inputs, plus Determinate Nix, FlakeHub CLI, AI applications, and upstream oh-my-pi. First-party code comes directly from this checkout.
 
@@ -1025,29 +1074,136 @@ current Sekka worktree, then `~/work/sekka/desktop/aizome`. `--checkout`
 accepts either the Sekka root or its Aizome component. `CARGO_BUILD_JOBS`
 can limit build concurrency without changing the core's ABI.
 
-The native Yukimi interface stays in `desktop/aizome/apps/yukimi`; both it
-and the GTK interface use the canonical backend libraries under
-`apps/yukimi/crates`. Their Cargo workspaces and locks remain separate.
-Aizome's package copies only its component, those shared libraries and their
-workspace manifest, plus the pinned Sidestep source. Editing unrelated
-Sekka components or Yukimi's GTK interface does not rebuild Aizome.
-`aizome-dev watch` includes the shared backend and rebuilds native Yukimi
-when it changes. Aizome retains bundled SQLite through `yukimi-store`'s
-`bundled` feature; GTK keeps its system SQLite dependency.
+Yukimi has one native interface in `desktop/aizome/apps/yukimi`, used by
+Aizome, Tatami and the other desktops. `apps/yukimi` keeps the privileged
+helper, CLI and canonical backend libraries in its separate Cargo workspace.
+Aizome's build exposes a `yukimi` runtime output containing only the window,
+launcher, desktop entry and icon; the main output links to it. The root
+`yukimi` package combines that output with the independently built helper.
+Tatami therefore does not retain Aizome's compositor, shell or other apps.
+The `yukimi` and `aizome-yukimi` commands launch the same app, with Aizome's
+Archivo and IBM Plex Mono fonts available even outside its session.
+
+Wayland sessions launch directly. On X11, the launcher opens a private Weston
+X11 window with its kiosk shell and software renderer. Weston follows the
+app's lifetime; closing either window ends the nested session. This adds
+another process and buffers only on X11. `programs.yukimi.*`, `sekka-update`
+and the helper's Polkit action remain compatible. The app uses bundled SQLite;
+the helper workspace uses system SQLite. Slow reads and changes stay off the
+interface thread, and only the authenticated helper changes the system.
+
+Aizome's package still copies only its component, shared backend and workspace
+manifest, and pinned Sidestep. Helper-only changes do not rebuild the window.
+`aizome-dev watch` includes the shared backend. Component GUI checks run with
+`nix build .#checks.x86_64-linux.yukimi-tatami` and
+`nix build .#checks.x86_64-linux.yukimi-x11`; these are not ISO qualification.
 
 Yukimi's own catalog and Genkan's catalog record availability against the
 target system and the package source each entry actually installs from. The
 shared resolver in `apps/yukimi/nix/catalog.nix` checks platform metadata,
 broken packages, missing packages and required applications, and instantiates
 otherwise supported packages to catch unsupported dependencies in wrappers.
-It neither builds the applications nor enables unsupported packages. Both
-interfaces keep unavailable cards visible with a reason; the helper refuses
-new unavailable catalog selections before editing configuration, while allowing
+It neither builds the applications nor enables unsupported packages. Yukimi
+keeps unavailable cards visible with a reason; the helper refuses new
+unavailable catalog selections before editing configuration, while allowing
 existing entries to be removed. Older system metadata retains its previous
 catalog behavior until the next successful system update.
 `checks.x86_64-linux.application-platforms` checks both x86 and ARM Linux
 catalogs, including Discord and Steam, without building their applications.
 This is component evaluation coverage, not an ISO or hardware qualification.
+
+The [October 2026 resource comparison](docs/test-results/yukimi-unified-2026-10-27.json)
+records three trials of each frontend in a private GPU-backed Tatami compositor
+on Intel integrated graphics, plus a Tatami-only software-rendered VM with no
+Aizome session. At 2560 × 1600, scale 2, the animated Overview's median app PSS
+was 87.3 MiB for GTK and 64.9 MiB for native Yukimi. App CPU was 7.3% and 3.9%
+of one logical core; compositor CPU was 1.5% and 2.7%. Render-engine activity
+was 2.7%/1.8% for GTK/the compositor and 0%/3.3% for native/the compositor.
+The native app draws into shared-memory buffers; the compositor still uses
+the GPU. On Installed, app PSS was 93.2/65.7 MiB and app CPU 0.4%/0.0%.
+Including compositor changes and subtracting each trial's empty compositor,
+Overview added a median 84.2 MiB PSS for GTK and 66.7 MiB for native Yukimi.
+
+This GPU has no dedicated VRAM. Overview's resident GTT buffers were
+123.0/202.3 MiB for GTK/the compositor and 0/158.4 MiB for native/the compositor.
+Shared buffers overlap between processes: these are not additive private
+allocations or extra amounts to add to PSS. The isolated VM's app PSS was
+306.3/28.3 MiB on Overview, confirming that native Yukimi does not require
+another Aizome app to keep its RAM cost low; software rendering accounts for
+much of GTK's higher VM cost. Startup, cold package indexing, discrete GPUs
+and a physical Tatami login are outside these measurements.
+
+The standalone uncompressed runtime closure grew from 896.2 to 1058.4 MiB,
+including Weston for X11. Copying only the eight bundled font files avoids
+retaining 382.3 MiB of unused font families. These are store sizes, not RAM or
+the incremental size of an already installed Tatami system. Builds and VM
+checks ran on `wx-workstation`; hardware sampling used the exact built ELFs.
+
+The shared backend's Aizome completion check uses the local
+`desktop/aizome/crates/aizome-ipc` protocol crate. The helper package includes only
+that crate and its workspace manifest from Aizome, plus the session launcher
+used by its environment-record regression. Keep these inputs narrow rather
+than copying the whole desktop into the helper build. The frontend performs
+session inspection without helper privileges; the helper's system-only check
+never connects to a compositor or follows a user's PATH. See
+[reload and completion advice](desktop/aizome/docs/reload.md#yukimis-update-advice)
+for the evidence used and remaining limits.
+
+The lock screen follows enabled Wayland outputs throughout lock acquisition
+and the confirmed lock. Every display has a focused password field sharing
+one authentication state; mirrors show their source's prompt and explicitly
+disabled displays stay off. Output removal destroys obsolete lock surfaces,
+returning outputs get new ones, and mode/scale/rotation changes reconfigure
+existing ones. The compositor also retargets the keyboard when displays
+change or the pointer moves between prompts. It keeps the session locked
+while outputs are absent. The
+[lock-screen display-change incident](docs/incidents/2026-10-27-lock-screen-display-change.md)
+records the failure that led to this.
+
+```sh
+nix develop .#aizome -c cargo test --locked --manifest-path desktop/aizome/Cargo.toml -p aizome-shell -p aizome-kit
+nix develop .#aizome -c cargo build --locked --manifest-path desktop/aizome/Cargo.toml -p aizome-shell
+nix develop .#aizome -c env AIZOME_LOCK_TEST_SHELL="$PWD/desktop/aizome/target/debug/aizome-shell" \
+  cargo test --locked --manifest-path desktop/aizome/Cargo.toml -p aizome-comp --test lock_displays -- --include-ignored
+```
+
+The shell tests cover authentication, every display's field, output loss
+during lock acquisition, no-output intervals, surface replacement and view
+updates. `lock_displays` uses a test lock client to check that lock surfaces
+refit mode/scale/rotation changes and that the keyboard follows the pointer
+between displays' lock surfaces. Its desktop cases, ignored unless explicitly
+run with the built shell, use the real shell and compositor over private
+Wayland sockets to check repeated output removal/restoration, disabled
+outputs, lid-close/undock/lid-open, DPMS, mirrors, input isolation and which
+prompt has the keyboard. `aizomectl input-state` names the lock surface with
+the keyboard (`the lock screen on <output>`). These are component checks,
+not physical suspend/resume or ISO qualification.
+
+Aizome's portal backend, `crates/aizome-portal`, answers
+`org.freedesktop.impl.portal.FileChooser` in Aizome sessions
+(`session/aizome-portals.conf`); D-Bus starts it as
+`aizome-portal.service`, and the module adds the package to
+`xdg.portal.extraPortals` so its activation file and `aizome.portal` are
+found. Each request runs a chooser process built from Hako's library
+(model, sidebar rows, path bar, icons), which the frontend's
+`Request.Close` ends. It opens over the asking app's window through
+xdg-foreign v2: Sidestep's `WindowOptions::foreign_parent`, which the
+kit takes as `WindowSpec::foreign_parent`, so Aizome needs a Sidestep
+revision that has it. The behaviour and its limits are in
+[Aizome's apps](desktop/aizome/docs/apps.md#the-file-chooser-portal).
+
+```sh
+nix develop .#aizome -c cargo test --locked --manifest-path desktop/aizome/Cargo.toml -p aizome-portal
+nix develop .#aizome -c cargo build --locked --manifest-path desktop/aizome/Cargo.toml -p aizome-portal
+nix develop .#aizome -c env AIZOME_PORTAL_TEST_BIN="$PWD/desktop/aizome/target/debug/aizome-portal" \
+  cargo test --locked --manifest-path desktop/aizome/Cargo.toml -p aizome-comp --test portal -- --include-ignored
+```
+
+The first covers the bus (a private D-Bus with a stand-in chooser), the
+chooser in each mode on the kit's stand-in platform, and its goldens. The
+last runs the real chooser under a headless compositor over a test window
+that exported itself, and checks that it is that window's dialog and takes
+the keys. Neither runs a browser or the installed session.
 
 ## Tatami Bluetooth
 
@@ -1842,17 +1998,14 @@ host's store, about 6 GiB for the ISO alone; the workflows keep no GC roots,
 and the daemon collects garbage when free space runs low.
 
 The runner's Nix client comes from Sekka's pinned Determinate input, matching
-the host daemon's implementation. The builder step prints the client version
-and only the daemon endpoint, version and trust status; it does not print
-environment variables or configuration. On October 20, an upstream Nix 2.34.8
-client hid a template-lock failure behind `Invalid BuildResult status ^P`.
-Determinate 3.15.0 encodes a cancelled build as
-[status 16](https://github.com/DeterminateSystems/nix-src/blob/v3.15.0/src/libstore/include/nix/store/build-result.hh),
-while the upstream client's
-[decoder accepts only 0–14](https://github.com/NixOS/nix/blob/2.34.8/src/libstore/common-protocol.cc).
-The template failure was fixed separately; changing the client preserves the
-original error when sibling builds are cancelled. `checks.x86_64-linux.runner-protocol`
-tests that path through a real daemon as an untrusted user, with the upstream
+the host daemon's implementation. An upstream client cannot decode every build
+status a Determinate daemon sends, and loses the original error when sibling
+builds are cancelled
+([incident](docs/incidents/2026-10-20-nightly-build-status-decode.md)). The
+builder step prints the client version and only the daemon endpoint, version
+and trust status; it does not print environment variables or configuration.
+`checks.x86_64-linux.runner-protocol`
+tests a cancelled sibling build through a real daemon as an untrusted user, with the upstream
 client as a negative control. It does not certify an existing runner deployment.
 
 After reviewing a runner change, rebuild and deploy its images using the steps
@@ -2175,7 +2328,9 @@ is not included in the ISO or the normal component checks.
 Discover the same way, on a Tatami VM with Genkan's application catalog and
 unfree software allowed. Yukimi makes its package list from the VM's Nixpkgs,
 searches for `steam`, opens the package's details and asks to install Steam
-for everyone; the confirmation is cancelled, and the test checks that nothing
-changed. It reads the expected text from part of each capture with Tesseract.
-The pointer positions and those parts assume Yukimi's current layout. Its
-captures are for review, not for `docs/screenshots.md`.
+for everyone. It cancels both the confirmation and the real Polkit prompt,
+checking that neither changes the configuration. The same check covers the
+application launcher, single-instance page requests, clipboard commands,
+fractional scaling and a smaller display. Tesseract reads the full captures
+and locates clickable labels. Captures are component-test evidence; record
+that provenance if using one in the gallery.
