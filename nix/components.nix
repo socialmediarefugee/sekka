@@ -46,12 +46,17 @@ rec {
   };
   # The catalog's applications from this flake (source "sekka"): its own, and
   # those other flakes package, built with the applications' Nixpkgs.
-  catalog.packages = forSystems (pkgs:
-    let system = pkgs.stdenv.hostPlatform.system;
-    in kakehashi.packages.${system} // {
+  catalog.packages = forSystems (
+    pkgs:
+    let
+      system = pkgs.stdenv.hostPlatform.system;
+    in
+    kakehashi.packages.${system}
+    // {
       superluminal = superluminal.packages.${system}.default;
       tracy = tracy.packages.${system}.tracy;
-    });
+    }
+  );
   calamares = {
     outPath = ../installer/genkan;
     nixosModules = {
