@@ -17,7 +17,7 @@
   # (tests/test_aizome_development.py); Nix can't use it, as GitHub's
   # tarballs of Sekka leave submodules empty.
   inputs.sidestep = {
-    url = "github:bitemyapp/sidestep/7bfacbbbc9cd70cf3442def70368e254f3c3712d";
+    url = "github:bitemyapp/sidestep/bca07b2661f361a7a9bef45a83c715eb42914953";
     flake = false;
   };
 

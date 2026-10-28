@@ -38,6 +38,8 @@
   dbus,
   libpulseaudio,
   libsecret,
+  ffmpeg,
+  pipewire,
   pam,
   systemd,
   cmake,
@@ -148,6 +150,9 @@ rustPlatform.buildRustPackage {
     pam
     libpulseaudio
     libsecret
+    # aizome-media: FFmpeg (mpv's) and PipeWire.
+    ffmpeg
+    pipewire
     openblas
     vulkan-headers
     vulkan-loader
